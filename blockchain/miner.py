@@ -1,13 +1,29 @@
 import hashlib
 import requests
-
+import json
+from multiprocessing import Pool
 import sys
+import os
 
 from uuid import uuid4
 
-from timeit import default_timer as timer
+# from timeit import default_timer as timer
+from time import time
 
 import random
+
+def find_solution(args):
+    last_hash, nonce_range = args
+
+    for nonce in range(nonce_range[0], nonce_range[1]):
+
+        block_string = json.dumps(nonce).encode()
+        result = hashlib.sha256(block_string).hexdigest()
+
+        if valid_proof(last_hash, result):
+            return nonce
+
+    return None
 
 
 def proof_of_work(last_proof):
@@ -18,27 +34,63 @@ def proof_of_work(last_proof):
     - IE:  last_hash: ...999123456, new hash 123456888...
     - p is the previous proof, and p' is the new proof
     """
-
-    start = timer()
-
-    print("Searching for next proof")
     proof = 0
-    #  TODO: Your code here
+    n_processes = os.cpu_count()
+    batch_size = int(2.5e5)
+    print(n_processes)
+    pool = Pool(n_processes)
 
-    print("Proof found: " + str(proof) + " in " + str(timer() - start))
-    return proof
+    last_hash = hashlib.sha256(json.dumps(last_proof).encode()).hexdigest()
+    solution = False
+
+    start = time()
+    print("Searching for next proof")
+    while True:
+
+        nonce_ranges = [
+            (proof + i * batch_size, proof + (i+1) * batch_size)
+            for i in range(n_processes)
+        ]
 
 
-def valid_proof(last_hash, proof):
+        params = [
+            (last_hash, nonce_range) for nonce_range in nonce_ranges
+        ]
+
+        # solutions = map(find_solution, params)
+        solutions = pool.map(find_solution, params)
+        solutions = filter(None, solutions)
+
+        for j in solutions:
+            print(j)
+            if j is not None:
+                solution = j
+
+        if solution:
+            end = time()
+            print(solution)
+            break
+
+        proof += 1
+
+    print("Proof found: " + str(solution) + " in " + str(end - start))
+
+    return solution
+
+
+def valid_proof(last_hash, proof_hash):
     """
     Validates the Proof:  Multi-ouroborus:  Do the last six characters of
     the last hash match the first six characters of the proof?
 
     IE:  last_hash: ...999123456, new hash 123456888...
     """
+    if last_hash[-6:] == proof_hash[:6]:
+        return True
+    else:
+        return False
 
-    # TODO: Your code here!
-    pass
+# print(proof_of_work(99))
 
 
 if __name__ == '__main__':
@@ -63,10 +115,11 @@ if __name__ == '__main__':
         f.write(id)
         f.close()
     # Run forever until interrupted
-    while True:
+    while coins_mined < 1:
         # Get the last proof from the server
         r = requests.get(url=node + "/last_proof")
         data = r.json()
+        print("current proof",data.get('proof'))
         new_proof = proof_of_work(data.get('proof'))
 
         post_data = {"proof": new_proof,
